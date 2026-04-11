@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Menu } from "lucide-react";
-import { useAuthStore } from "@/store/authStore";
+import { useAuthStore } from "@/lib/authStore";
 import { useUIStore } from "@/store/uiStore";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 
@@ -29,7 +29,6 @@ export default function MainLayout({
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--bg-primary)]">
       <Sidebar />
-
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Top bar — mobile only */}
         <div className="flex items-center gap-3 px-4 py-3 md:hidden border-b border-[var(--border)] shrink-0">
@@ -45,7 +44,6 @@ export default function MainLayout({
             Mohab AI
           </span>
         </div>
-
         <main className="flex-1 overflow-hidden">{children}</main>
       </div>
     </div>
