@@ -35,21 +35,25 @@ export function useStream() {
         token,
         (event) => {
           if (event.type === "content" && event.content) {
-            appendStreamChunk(conversationId, assistantMsgId, event.content);
+            // Fix 3: Dropped conversationId, using assistantMsgId only
+            appendStreamChunk(assistantMsgId, event.content);
           }
           if (event.type === "image" && event.url) {
-            setImageMessage(conversationId, assistantMsgId, event.url);
+            // Fix 3: Dropped conversationId
+            setImageMessage(assistantMsgId, event.url);
           }
           if (event.type === "tool_result") {
-            // tool results are absorbed into content by backend — ignore here
+            // tool results absorbed into content by backend — ignore here
           }
         },
         () => {
-          finalizeMessage(conversationId, assistantMsgId);
+          // Fix 3: Dropped conversationId
+          finalizeMessage(assistantMsgId);
           setIsStreaming(false);
         },
         (err) => {
-          setMessageError(conversationId, assistantMsgId);
+          // Fix 3: Dropped conversationId
+          setMessageError(assistantMsgId);
           setIsStreaming(false);
           toast.error(err ?? "Something went wrong");
         }
