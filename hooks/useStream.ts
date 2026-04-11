@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { streamChat } from "@/lib/stream";
 import { useChatStore } from "@/store/chatStore";
 import { tokenStorage } from "@/lib/auth";
@@ -15,7 +15,12 @@ export function useStream() {
     setImageMessage,
     setMessageError,
     setIsStreaming,
+    setCurrentTurnId,
+    resetTurnState,
   } = useChatStore();
+
+  // Track current turn to prevent stale writes
+  const activeTurnRef = useRef<string | null>(null);
 
   const send = useCallback(
     async (conversationId: number, message: string) => {
@@ -25,38 +30,74 @@ export function useStream() {
         return;
       }
 
+      // Reset dedup state for new request
+      resetTurnState();
+      activeTurnRef.current = null;
+
       addUserMessage(conversationId, message);
       const assistantMsgId = startAssistantMessage(conversationId);
       setIsStreaming(true);
+
+      let chunkCounter = 0;
 
       await streamChat(
         conversationId,
         message,
         token,
         (event) => {
+          // ━━━ Meta event: capture turn_id for deduplication ━━━
+          if (event.type === "meta" && event.turn_id) {
+            activeTurnRef.current = event.turn_id;
+            setCurrentTurnId(event.turn_id);
+            return;
+          }
+
+          // ━━━ Ignore events from a different turn (stale stream) ━━━
+          if (event.turn_id && activeTurnRef.current && event.turn_id !== activeTurnRef.current) {
+            return;
+          }
+
+          // ━━━ Content chunks with deduplication ━━━
           if (event.type === "content" && event.content) {
-            // Fix 3: Dropped conversationId, using assistantMsgId only
-            appendStreamChunk(assistantMsgId, event.content);
+            appendStreamChunk(assistantMsgId, event.content, chunkCounter);
+            chunkCounter++;
+            return;
           }
+
+          // ━━━ Image events ━━━
           if (event.type === "image" && event.url) {
-            // Fix 3: Dropped conversationId
             setImageMessage(assistantMsgId, event.url);
+            return;
           }
+
+          // ━━━ Tool results: absorbed into content by backend ━━━
           if (event.type === "tool_result") {
-            // tool results absorbed into content by backend — ignore here
+            return;
+          }
+
+          // ━━━ Error events ━━━
+          if (event.type === "error") {
+            setMessageError(assistantMsgId);
+            setIsStreaming(false);
+            activeTurnRef.current = null;
+            const errorMsg = event.error || "Something went wrong";
+            toast.error(errorMsg);
+            return;
           }
         },
         () => {
-          // Fix 3: Dropped conversationId
+          // Done: only finalize if this is our turn
           finalizeMessage(assistantMsgId);
           setIsStreaming(false);
+          activeTurnRef.current = null;
         },
         (err) => {
-          // Fix 3: Dropped conversationId
+          // Network/parse error
           setMessageError(assistantMsgId);
           setIsStreaming(false);
-          toast.error(err ?? "Something went wrong");
-        }
+          activeTurnRef.current = null;
+          toast.error(err ?? "Connection failed. Please try again.");
+        },
       );
     },
     [
@@ -67,6 +108,8 @@ export function useStream() {
       setImageMessage,
       setMessageError,
       setIsStreaming,
+      setCurrentTurnId,
+      resetTurnState,
     ]
   );
 
