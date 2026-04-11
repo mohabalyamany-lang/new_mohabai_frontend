@@ -6,10 +6,11 @@ interface ChatState {
   conversations: Conversation[];
   activeConversationId: number | null;
 
-  messages: Record<number, Message[]>;
-  loadingConversations: Record<number, boolean>;
+  messagesById: Record<string, Message>;
+  conversationMessages: Record<number, string[]>;
 
-  streaming: Record<number, string | null>; // msgId per conversation
+  isStreaming: boolean;
+  streamingMessageId: string | null;
 
   setConversations: (convos: Conversation[]) => void;
   addConversation: (convo: Conversation) => void;
@@ -18,38 +19,32 @@ interface ChatState {
   setActiveConversation: (id: number | null) => void;
 
   setMessages: (conversationId: number, messages: Message[]) => void;
-  appendMessages: (conversationId: number, messages: Message[]) => void;
 
   addUserMessage: (conversationId: number, content: string) => string;
   startAssistantMessage: (conversationId: number) => string;
 
-  appendStreamChunk: (conversationId: number, msgId: string, chunk: string) => void;
-  finalizeMessage: (conversationId: number, msgId: string) => void;
+  appendStreamChunk: (msgId: string, chunk: string) => void;
+  finalizeMessage: (msgId: string) => void;
+  setImageMessage: (msgId: string, url: string) => void;
+  setMessageError: (msgId: string) => void;
 
-  setImageMessage: (conversationId: number, msgId: string, imageUrl: string) => void;
-  setMessageError: (conversationId: number, msgId: string, error?: string) => void;
-
-  setLoading: (conversationId: number, val: boolean) => void;
+  setIsStreaming: (val: boolean, msgId?: string | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   activeConversationId: null,
 
-  messages: {},
-  loadingConversations: {},
+  messagesById: {},
+  conversationMessages: {},
 
-  streaming: {},
+  isStreaming: false,
+  streamingMessageId: null,
 
-  // -------------------------
-  // Conversation
-  // -------------------------
   setConversations: (convos) => set({ conversations: convos }),
 
   addConversation: (convo) =>
-    set((s) => ({
-      conversations: [convo, ...s.conversations],
-    })),
+    set((s) => ({ conversations: [convo, ...s.conversations] })),
 
   updateConversation: (id, patch) =>
     set((s) => ({
@@ -60,36 +55,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   deleteConversation: (id) =>
     set((s) => {
-      const { [id]: _, ...restMessages } = s.messages;
-      const { [id]: __, ...restStreaming } = s.streaming;
-
+      const newConvMsgs = { ...s.conversationMessages };
+      delete newConvMsgs[id];
       return {
         conversations: s.conversations.filter((c) => c.id !== id),
-        messages: restMessages,
-        streaming: restStreaming,
+        conversationMessages: newConvMsgs,
       };
     }),
 
   setActiveConversation: (id) => set({ activeConversationId: id }),
 
-  // -------------------------
-  // Messages
-  // -------------------------
   setMessages: (conversationId, messages) =>
-    set((s) => ({
-      messages: {
-        ...s.messages,
-        [conversationId]: dedupeAndSort(messages),
-      },
-    })),
-
-  appendMessages: (conversationId, newMessages) =>
     set((s) => {
-      const existing = s.messages[conversationId] ?? [];
+      const byId = { ...s.messagesById };
+      const ids: string[] = [];
+
+      for (const m of messages) {
+        byId[m.id] = m;
+        ids.push(m.id);
+      }
+
       return {
-        messages: {
-          ...s.messages,
-          [conversationId]: dedupeAndSort([...existing, ...newMessages]),
+        messagesById: byId,
+        conversationMessages: {
+          ...s.conversationMessages,
+          [conversationId]: ids,
         },
       };
     }),
@@ -105,9 +95,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     };
 
     set((s) => ({
-      messages: {
-        ...s.messages,
-        [conversationId]: [...(s.messages[conversationId] ?? []), msg],
+      messagesById: { ...s.messagesById, [id]: msg },
+      conversationMessages: {
+        ...s.conversationMessages,
+        [conversationId]: [
+          ...(s.conversationMessages[conversationId] ?? []),
+          id,
+        ],
       },
     }));
 
@@ -126,99 +120,68 @@ export const useChatStore = create<ChatState>((set, get) => ({
     };
 
     set((s) => ({
-      messages: {
-        ...s.messages,
-        [conversationId]: [...(s.messages[conversationId] ?? []), msg],
+      messagesById: { ...s.messagesById, [id]: msg },
+      conversationMessages: {
+        ...s.conversationMessages,
+        [conversationId]: [
+          ...(s.conversationMessages[conversationId] ?? []),
+          id,
+        ],
       },
-      streaming: {
-        ...s.streaming,
-        [conversationId]: id,
-      },
+      streamingMessageId: id,
     }));
 
     return id;
   },
 
-  appendStreamChunk: (conversationId, msgId, chunk) =>
+  appendStreamChunk: (msgId, chunk) =>
     set((s) => ({
-      messages: {
-        ...s.messages,
-        [conversationId]: (s.messages[conversationId] ?? []).map((m) =>
-          m.id === msgId
-            ? { ...m, content: m.content + chunk }
-            : m
-        ),
-      },
-    })),
-
-  finalizeMessage: (conversationId, msgId) =>
-    set((s) => {
-      const updated = (s.messages[conversationId] ?? []).map((m) =>
-        m.id === msgId ? { ...m, isStreaming: false } : m
-      );
-
-      const { [conversationId]: _, ...restStreaming } = s.streaming;
-
-      return {
-        messages: {
-          ...s.messages,
-          [conversationId]: updated,
+      messagesById: {
+        ...s.messagesById,
+        [msgId]: {
+          ...s.messagesById[msgId],
+          content: s.messagesById[msgId].content + chunk,
         },
-        streaming: restStreaming,
-      };
-    }),
-
-  setImageMessage: (conversationId, msgId, imageUrl) =>
-    set((s) => ({
-      messages: {
-        ...s.messages,
-        [conversationId]: (s.messages[conversationId] ?? []).map((m) =>
-          m.id === msgId
-            ? { ...m, imageUrl, isStreaming: false }
-            : m
-        ),
       },
     })),
 
-  setMessageError: (conversationId, msgId, error) =>
+  finalizeMessage: (msgId) =>
     set((s) => ({
-      messages: {
-        ...s.messages,
-        [conversationId]: (s.messages[conversationId] ?? []).map((m) =>
-          m.id === msgId
-            ? {
-                ...m,
-                content: m.content || "Failed to generate response.",
-                isStreaming: false,
-                error: true,
-              }
-            : m
-        ),
+      messagesById: {
+        ...s.messagesById,
+        [msgId]: {
+          ...s.messagesById[msgId],
+          isStreaming: false,
+        },
+      },
+      streamingMessageId: null,
+    })),
+
+  setImageMessage: (msgId, url) =>
+    set((s) => ({
+      messagesById: {
+        ...s.messagesById,
+        [msgId]: {
+          ...s.messagesById[msgId],
+          imageUrl: url,
+          isStreaming: false,
+        },
       },
     })),
 
-  setLoading: (conversationId, val) =>
+  setMessageError: (msgId) =>
     set((s) => ({
-      loadingConversations: {
-        ...s.loadingConversations,
-        [conversationId]: val,
+      messagesById: {
+        ...s.messagesById,
+        [msgId]: {
+          ...s.messagesById[msgId],
+          content: "Something went wrong.",
+          isStreaming: false,
+          error: true,
+        },
       },
     })),
+
+  setIsStreaming: (val, msgId = null) =>
+    set({ isStreaming: val, streamingMessageId: msgId }),
 }));
-
-// -------------------------
-// Helpers
-// -------------------------
-function dedupeAndSort(messages: Message[]): Message[] {
-  const map = new Map<string, Message>();
-
-  for (const msg of messages) {
-    map.set(msg.id, msg);
-  }
-
-  return Array.from(map.values()).sort(
-    (a, b) =>
-      new Date(a.created_at).getTime() -
-      new Date(b.created_at).getTime()
-  );
-}
