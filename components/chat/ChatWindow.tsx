@@ -13,11 +13,18 @@ interface Props {
 }
 
 export function ChatWindow({ conversationId }: Props) {
-  const { messages, setMessages, isStreaming } = useChatStore();
+  // Fix 2: Updated selectors to use normalized state
+  const setMessages = useChatStore((s) => s.setMessages);
+  const isStreaming = useChatStore((s) => s.isStreaming);
+  const messagesById = useChatStore((s) => s.messagesById);
+  const conversationMessages = useChatStore((s) => s.conversationMessages);
+  
   const { send } = useStream();
   const { updateConversation } = useConversations();
 
-  const currentMessages = messages[conversationId] ?? [];
+  // Fix 2: Map the message IDs for this conversation back to their actual message objects
+  const ids = conversationMessages[conversationId] ?? [];
+  const currentMessages = ids.map((id) => messagesById[id]).filter(Boolean);
 
   useEffect(() => {
     const load = async () => {
@@ -31,7 +38,7 @@ export function ChatWindow({ conversationId }: Props) {
       }
     };
     load();
-  }, [conversationId]);
+  }, [conversationId, setMessages]);
 
   const handleSend = async (message: string) => {
     // Auto-title conversation from first message
