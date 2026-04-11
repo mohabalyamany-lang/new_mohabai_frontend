@@ -2,10 +2,11 @@ import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import { tokenStorage } from "./auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_PREFIX = "/api/v1";
 
 export const api = axios.create({
-  baseURL: BASE_URL,
-  withCredentials: true, // sends http-only refresh cookie
+  baseURL: `${BASE_URL}${API_PREFIX}`,
+  headers: { "Content-Type": "application/json" },
 });
 
 // Attach access token to every request
@@ -31,7 +32,7 @@ const processQueue = (error: unknown, token: string | null = null) => {
   failedQueue = [];
 };
 
-// Auto refresh on 401
+// Auto-refresh on 401
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
@@ -54,7 +55,7 @@ api.interceptors.response.use(
 
       try {
         const { data } = await axios.post(
-          `${BASE_URL}/auth/refresh`,
+          `${BASE_URL}${API_PREFIX}/auth/refresh`,
           {},
           { withCredentials: true }
         );
@@ -66,7 +67,9 @@ api.interceptors.response.use(
       } catch (refreshError) {
         processQueue(refreshError, null);
         tokenStorage.clear();
-        window.location.href = "/login";
+        if (typeof window !== "undefined") {
+          window.location.href = "/login";
+        }
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
