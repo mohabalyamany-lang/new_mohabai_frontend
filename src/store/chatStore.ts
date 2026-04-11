@@ -12,6 +12,10 @@ interface ChatState {
   isStreaming: boolean;
   streamingMessageId: string | null;
 
+  // Deduplication tracking
+  currentTurnId: string | null;
+  processedChunkKeys: Set<string>;
+
   setConversations: (convos: Conversation[]) => void;
   addConversation: (convo: Conversation) => void;
   updateConversation: (id: number, patch: Partial<Conversation>) => void;
@@ -23,12 +27,17 @@ interface ChatState {
   addUserMessage: (conversationId: number, content: string) => string;
   startAssistantMessage: (conversationId: number) => string;
 
-  appendStreamChunk: (msgId: string, chunk: string) => void;
+  // Turn-aware streaming
+  setCurrentTurnId: (turnId: string | null) => void;
+  appendStreamChunk: (msgId: string, chunk: string, chunkIndex?: number) => void;
   finalizeMessage: (msgId: string) => void;
   setImageMessage: (msgId: string, url: string) => void;
   setMessageError: (msgId: string) => void;
 
   setIsStreaming: (val: boolean, msgId?: string | null) => void;
+
+  // Reset dedup state on new conversation
+  resetTurnState: () => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -40,6 +49,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   isStreaming: false,
   streamingMessageId: null,
+
+  // Deduplication
+  currentTurnId: null,
+  processedChunkKeys: new Set(),
 
   setConversations: (convos) => set({ conversations: convos }),
 
@@ -63,7 +76,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
     }),
 
-  setActiveConversation: (id) => set({ activeConversationId: id }),
+  setActiveConversation: (id) => {
+    set({
+      activeConversationId: id,
+      currentTurnId: null,
+      processedChunkKeys: new Set(),
+    });
+  },
 
   setMessages: (conversationId, messages) =>
     set((s) => {
@@ -134,16 +153,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return id;
   },
 
-  appendStreamChunk: (msgId, chunk) =>
-    set((s) => ({
-      messagesById: {
-        ...s.messagesById,
-        [msgId]: {
-          ...s.messagesById[msgId],
-          content: s.messagesById[msgId].content + chunk,
+  setCurrentTurnId: (turnId) =>
+    set({
+      currentTurnId: turnId,
+      processedChunkKeys: new Set(),
+    }),
+
+  appendStreamChunk: (msgId, chunk, chunkIndex) =>
+    set((s) => {
+      // Deduplication: skip if we've seen this exact chunk for this message
+      const dedupKey = `${msgId}:${chunkIndex ?? chunk}`;
+      if (s.processedChunkKeys.has(dedupKey)) {
+        return s;
+      }
+
+      const newProcessedKeys = new Set(s.processedChunkKeys);
+      newProcessedKeys.add(dedupKey);
+
+      return {
+        messagesById: {
+          ...s.messagesById,
+          [msgId]: {
+            ...s.messagesById[msgId],
+            content: s.messagesById[msgId].content + chunk,
+          },
         },
-      },
-    })),
+        processedChunkKeys: newProcessedKeys,
+      };
+    }),
 
   finalizeMessage: (msgId) =>
     set((s) => ({
@@ -175,7 +212,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...s.messagesById,
         [msgId]: {
           ...s.messagesById[msgId],
-          content: "Something went wrong.",
+          content: "Something went wrong. Please try again.",
           isStreaming: false,
           error: true,
         },
@@ -184,4 +221,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setIsStreaming: (val, msgId = null) =>
     set({ isStreaming: val, streamingMessageId: msgId }),
+
+  resetTurnState: () =>
+    set({
+      currentTurnId: null,
+      processedChunkKeys: new Set(),
+    }),
 }));
