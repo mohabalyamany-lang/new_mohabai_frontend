@@ -60,10 +60,6 @@ export async function streamChat(
 
         try {
           const event: StreamEvent = JSON.parse(raw);
-
-          // Skip meta events — they're for internal tracking only
-          if (event.type === "meta") continue;
-
           if (event.type === "done") {
             onDone();
             return;
