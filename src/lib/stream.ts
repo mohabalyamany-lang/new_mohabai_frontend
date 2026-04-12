@@ -11,7 +11,6 @@ export async function streamChat(
   onError: (err: string) => void
 ): Promise<void> {
   let response: Response;
-
   try {
     response = await fetch(`${BASE_URL}/api/v1/stream-chat`, {
       method: "POST",
@@ -60,6 +59,7 @@ export async function streamChat(
 
         try {
           const event: StreamEvent = JSON.parse(raw);
+
           if (event.type === "done") {
             onDone();
             return;
